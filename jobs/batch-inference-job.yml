@@ -1,0 +1,48 @@
+# Batch Inference Job
+# Runs batch predictions using the Champion model
+
+resources:
+  jobs:
+    batch_inference_job:
+      name: "[${bundle.target}] BYO Model - Batch Inference"
+      description: "Run batch predictions using the Champion model"
+
+      # Job cluster configuration
+      job_clusters:
+        - job_cluster_key: inference_cluster
+          new_cluster:
+            spark_version: "14.3.x-scala2.12"
+            node_type_id: "Standard_DS4_v2"
+            num_workers: 2
+            spark_conf:
+              spark.databricks.delta.preview.enabled: "true"
+
+      tasks:
+        - task_key: batch_inference
+          job_cluster_key: inference_cluster
+          notebook_task:
+            notebook_path: ../artifacts/02_model_deployment/4b_batch_inference.ipynb
+            base_parameters:
+              catalog_name: ${var.catalog_name}
+              schema_name: ${var.schema_name}
+              model_name: ${var.model_name}
+              input_table: ""
+              output_table: ""
+
+      # Permissions
+      permissions:
+        - level: CAN_VIEW
+          group_name: users
+        - level: CAN_MANAGE_RUN
+          user_name: ${workspace.current_user.userName}
+
+      # Schedule for recurring batch inference
+      # schedule:
+      #   quartz_cron_expression: "0 0 6 * * ?"
+      #   timezone_id: "America/New_York"
+
+      # Tags
+      tags:
+        team: ml-engineering
+        project: byo-model
+        stage: batch-inference

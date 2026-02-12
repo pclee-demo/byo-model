@@ -1,0 +1,84 @@
+# Model Deployment Job
+# Evaluation → approval → (conditional) real-time serving deployment.
+# Deployment runs only when model_approval sets approval_status to "approved".
+
+resources:
+  jobs:
+    model_deployment_job:
+      name: "[${bundle.target}] BYO Model - Model Deployment Pipeline"
+      description: "Evaluation → approval → create serving endpoint (only if approved)"
+
+      job_clusters:
+        - job_cluster_key: deployment_cluster
+          new_cluster:
+            spark_version: "14.3.x-scala2.12"
+            node_type_id: "Standard_DS3_v2"
+            num_workers: 1
+            spark_conf:
+              spark.databricks.delta.preview.enabled: "true"
+
+      tasks:
+        # Task 1: Model Evaluation
+        - task_key: model_evaluation
+          job_cluster_key: deployment_cluster
+          notebook_task:
+            notebook_path: ../artifacts/02_model_deployment/2_model_evaluation.ipynb
+            base_parameters:
+              catalog_name: ${var.catalog_name}
+              schema_name: ${var.schema_name}
+              model_name: ${var.model_name}
+              model_version: ""
+              evaluation_table: ""
+
+        # Task 2: Model Approval (depends on evaluation)
+        - task_key: model_approval
+          depends_on:
+            - task_key: model_evaluation
+          job_cluster_key: deployment_cluster
+          notebook_task:
+            notebook_path: ../artifacts/02_model_deployment/3_model_approval.ipynb
+            base_parameters:
+              catalog_name: ${var.catalog_name}
+              schema_name: ${var.schema_name}
+              model_name: ${var.model_name}
+              model_version: "{{tasks.model_evaluation.values.model_version}}"
+              accuracy_threshold: ${var.accuracy_threshold}
+              f1_threshold: ${var.f1_threshold}
+
+        # Condition: only deploy when approval_status is "approved"
+        - task_key: condition_approval
+          depends_on:
+            - task_key: model_approval
+          condition_task:
+            left: "{{tasks.model_approval.values.approval_status}}"
+            op: EQUAL_TO
+            right: "approved"
+
+        # Task 3: Create serving endpoint — only if approved
+        - task_key: model_deployment
+          depends_on:
+            - task_key: condition_approval
+              outcome: "true"
+          job_cluster_key: deployment_cluster
+          notebook_task:
+            notebook_path: ../artifacts/02_model_deployment/4a_model_serving.ipynb
+            base_parameters:
+              catalog_name: ${var.catalog_name}
+              schema_name: ${var.schema_name}
+              model_name: ${var.model_name}
+              model_version: "{{tasks.model_approval.values.model_version}}"
+              workload_size: "Small"
+              scale_to_zero: "true"
+
+      # Permissions
+      permissions:
+        - level: CAN_VIEW
+          group_name: users
+        - level: CAN_MANAGE_RUN
+          user_name: ${workspace.current_user.userName}
+
+      # Tags
+      tags:
+        team: ml-engineering
+        project: byo-model
+        stage: model-deployment

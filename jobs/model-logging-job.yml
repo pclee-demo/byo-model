@@ -1,0 +1,43 @@
+# Model Logging Job
+# Loads artifacts, logs to MLflow, and registers to Unity Catalog
+
+resources:
+  jobs:
+    model_logging_job:
+      name: "[${bundle.target}] BYO Model - Model Logging"
+      description: "Load model artifacts, log to MLflow, and register to Unity Catalog"
+
+      # Job cluster configuration
+      job_clusters:
+        - job_cluster_key: logging_cluster
+          new_cluster:
+            spark_version: "14.3.x-scala2.12"
+            node_type_id: "Standard_DS3_v2"
+            num_workers: 1
+            spark_conf:
+              spark.databricks.delta.preview.enabled: "true"
+
+      tasks:
+        - task_key: log_and_register
+          job_cluster_key: logging_cluster
+          notebook_task:
+            notebook_path: ../artifacts/01_model_log/1a_native_xgb.ipynb
+            base_parameters:
+              catalog_name: ${var.catalog_name}
+              schema_name: ${var.schema_name}
+              volume_name: ${var.volume_name}
+              model_name: ${var.model_name}
+              experiment_path: ${var.experiment_path}
+
+      # Permissions
+      permissions:
+        - level: CAN_VIEW
+          group_name: users
+        - level: CAN_MANAGE_RUN
+          user_name: ${workspace.current_user.userName}
+
+      # Tags
+      tags:
+        team: ml-engineering
+        project: byo-model
+        stage: model-logging

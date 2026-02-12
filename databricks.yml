@@ -1,0 +1,84 @@
+# Databricks Asset Bundle Configuration
+# Reference: https://docs.databricks.com/dev-tools/bundles/settings.html
+#
+# Jobs in jobs/ use these variables for catalog, schema, volume, model name, and approval thresholds.
+# The e2e pipeline job also defines job parameters run_realtime and run_batch (see e2e-pipeline-job.yml).
+
+bundle:
+  name: byo-model
+
+# Include job definitions from jobs/ directory
+include:
+  - jobs/*.yml
+
+# Variables for parameterization across environments (match README / notebook defaults)
+variables:
+  catalog_name:
+    description: Unity Catalog name
+    default: pcl
+  schema_name:
+    description: Schema name within the catalog
+    default: byo_model
+  volume_name:
+    description: Volume name for model artifacts
+    default: volume
+  model_name:
+    description: Registered model name (e.g. pyfunc_xgb, native_torch)
+    default: pyfunc_xgb
+  experiment_path:
+    description: MLflow experiment path (optional)
+    default: ""
+  accuracy_threshold:
+    description: Minimum accuracy for model approval
+    default: "0.25"
+  f1_threshold:
+    description: Minimum F1 score for model approval
+    default: "0.10"
+  databricks_host:
+    description: Databricks workspace host (set per environment or in CLI)
+    default: ""
+
+# Workspace configuration
+workspace:
+  root_path: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/${bundle.target}
+
+# Target environments (override variables per target as needed)
+targets:
+  dev:
+    mode: development
+    default: true
+    workspace:
+      host: ${var.databricks_host}
+    variables:
+      catalog_name: pcl
+      schema_name: byo_model
+
+  prod:
+    mode: production
+    workspace:
+      host: ${var.databricks_host}
+    variables:
+      catalog_name: pcl
+      schema_name: byo_model
+    run_as:
+      # service_principal_name: ml-prod-sp
+      user_name: ${workspace.current_user.userName}
+
+# Artifact synchronization
+sync:
+  include:
+    - artifacts/**/*.ipynb
+  exclude:
+    - "*.pyc"
+    - "__pycache__"
+    - ".git"
+
+# Resources (additional resources can be defined here)
+resources:
+  # Jobs are defined in jobs/*.yml files
+  experiments:
+    ml_experiment:
+      name: /Workspace/Users/${workspace.current_user.userName}/byo-model/${var.model_name}
+      permissions:
+        - level: CAN_MANAGE
+          user_name: ${workspace.current_user.userName}
