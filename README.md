@@ -2,16 +2,17 @@
 
 ## Purpose
 
-This template defines a standardised, repeatable pattern for onboarding externally trained models into Databricks.
+This template defines a standardised, repeatable pattern for onboarding models into Databricks MLflow and deploying them to Model Serving.
 
-This template eliminates:
+It eliminates:
 - One-off deployment scripts
 - Manual model rewrites
 - Broken lineage and unmanaged artifacts
 - Inconsistent logging patterns across frameworks
 
 It supports:
-- Native MLflow flavours (XGBoost, scikit-learn, PyTorch)
+- Retraining existing models in Databricks with MLflow autolog
+- Native MLflow flavours (XGBoost, scikit-learn, PyTorch) for externally trained artifacts
 - Custom PyFunc models with preprocessing/postprocessing logic
 - Unified deployment pattern regardless of framework
 
@@ -24,72 +25,53 @@ Minimum requirements:
 - Python packages (installed via notebook `%pip` as needed): `xgboost`, `scikit-learn`, `torch`, `threadpoolctl>=3.5.0`
 
 ## Quickstart
+
+### Path A — Already training in Databricks (no MLflow yet)
+
+1. Create catalog, schema, and feature/label tables.
+2. Run `01_retrain_with_mlflow/0_train_with_autolog.ipynb`.
+3. Run evaluation, approval, and serving notebooks in `02_model_deployment/`.
+
+### Path B — Externally trained model artifact
+
 1. Create catalog, schema, volume.
 2. Upload model artifacts to volume.
-3. Run appropriate logging notebook (1a-1e).
-4. Run evaluation notebook.
-5. Run model approval notebook.
-6. Run serving or batch inference notebook.
+3. Run the appropriate logging notebook in `01_model_log_external/` (1a–1e).
+4. Run evaluation, approval, and serving notebooks in `02_model_deployment/`.
 
-Total time: ~30-60 minutes for standard frameworks.
+Total time: ~30–60 minutes for standard frameworks.
 
 ## End-to-end flow
 
-The workflow follows three stages:
-
-1. **Stage 1 - Artifact Export** — What does the customer already have? 
-    - E.g. `.pkl`, `.pt`, `.json`, preprocessing configs.
-2. **Stage 2 - Log & register** — How do we make it governable, traceable and production-ready? 
-    - This stage loads artifacts from UC volume -> validates checksums (optional but recommended) -> infers signature -> logs to MLflow -> registers to UC -> assigns a Champion alias.
-3. **Stage 3 - Deploy** — How do we operationalise it?
-    - Options: real-time model serving endpoint or batch inference.
-    - Once registered, the same deployment code works for all model types.
-
-## Operational Considerations
-
-This template covers onboarding and deployment only.
-
-Not included:
-- Drift detection
-- Automated retraining
-- Blue/green serving
-- Canary deployments
-- Multi-model routing
-
-These should be layered on top depending on customer maturity.
-
-## Initial setup
-
-### Create Unity Catalog resources
-
-```sql
-CREATE CATALOG IF NOT EXISTS <catalog>;
-CREATE SCHEMA IF NOT EXISTS <catalog>.<schema>;
-CREATE VOLUME IF NOT EXISTS <catalog>.<schema>.<volume>;
 ```
-
-Notebooks use widget defaults: `catalog_name`, `schema_name`, `volume_name`. Ensure these are aligned before running.
-
-## Artifact contract
-
-Minimum required:
-- Serialized model artifact (framework-specific)
-
-Strongly recommended:
-- `canonical_input.json` for signature inference
-- `checksums.json` for integrity validation
+┌─────────────────────────────────────────────────────────┐
+│  Entry point A                  Entry point B           │
+│  01_retrain_with_mlflow/        01_model_log_external/  │
+│  (train in Databricks)          (external artifact)     │
+└────────────────────┬────────────────────┬───────────────┘
+                     │                    │
+                     └─────────┬──────────┘
+                               ▼
+                    02_model_deployment/
+                    2_model_evaluation
+                         ▼
+                    3_model_approval
+                         ▼
+                    4a_model_serving  /  4b_batch_inference
+```
 
 ## Repository structure
 
 ```
 byo_model/
 ├── README.md
-├── databricks.yml              # Optional: DABS bundle config
-├── artifacts/                  # All notebooks live here
-│   ├── 00_setup/
-│   ├── 01_model_log/
-│   └── 02_model_deployment/
-└── jobs/                       # Optional: DABS job definitions
+├── databricks.yml              # DABs bundle config
+├── artifacts/
+│   ├── 00_setup/               # Simulate external training (demo/test only — skip in real engagements)
+│   ├── 01_retrain_with_mlflow/ # Entry point A: already training in Databricks, add MLflow
+│   ├── 01_model_log_external/  # Entry point B: log and register externally trained artifact
+│   └── 02_model_deployment/    # Evaluate → approve → serve (both paths converge here)
+└── jobs/                       # DABs job definitions
 ```
 
 ## Artifacts directory
@@ -99,11 +81,19 @@ Simulates external training. In real customer scenarios, **skip this** and use t
 
 | Notebook | Purpose |
 |----------|---------|
-| `0_export_model_and_artifacts.ipynb` | Trains sample models and exports native + PyFunc artifacts into a UC volume. |
+| `0_export_model_and_artifacts.ipynb` | Trains sample models and exports artifacts into a UC volume. |
 
-#### `artifacts/01_model_log/`
+#### `artifacts/01_retrain_with_mlflow/`
 
-Logs and registers externally trained models. Shared helpers are in `00_shared.ipynb`; run it from 1a–1e via `%run ./00_shared`.
+For teams already training in Databricks without MLflow. Adds MLflow instrumentation to existing training code.
+
+| Notebook | Purpose |
+|----------|---------|
+| `0_train_with_autolog.ipynb` | Adds `mlflow.autolog()` to existing training code, registers model to UC. |
+
+#### `artifacts/01_model_log_external/`
+
+For teams with externally trained model artifacts. Shared helpers are in `00_shared.ipynb`; run it from 1a–1e via `%run ./00_shared`.
 
 | Notebook | Model type | Logging |
 |----------|------------|---------|
@@ -118,73 +108,173 @@ Each notebook:
 - Validates checksums (if present)
 - Infers signature
 - Logs to MLflow
-- Registers model
-- Assigns Champion alias
+- Registers model to UC
 
 #### `artifacts/02_model_deployment/`
 
-Handles evaluation, approval and deployment.
+Handles evaluation, approval, and deployment. Both entry points converge here.
 
 | Notebook | Purpose |
 |----------|---------|
-| `2_model_evaluation.ipynb` | Evaluate model |
-| `3_model_approval.ipynb` | Approve/reject based on thresholds |
-| `4a_model_serving.ipynb` | Create model serving endpoint for real-time inference |
+| `2_model_evaluation.ipynb` | Evaluate model on held-out data, log metrics |
+| `3_model_approval.ipynb` | Approve/reject based on thresholds, assign Champion alias |
+| `4a_model_serving.ipynb` | Deploy Champion to real-time serving endpoint, enable inference logging |
 | `4b_batch_inference.ipynb` | Batch scoring |
-| `_inference_reference.ipynb` | Inference cookbook.
+| `_inference_reference.ipynb` | Inference cookbook |
 
-Switch models by updating `model_name`.
+## Artifact contract
 
-## Using with customer artifacts
+Minimum required (Path B only):
+- Serialized model artifact (framework-specific)
 
-Typical flow:
+Strongly recommended:
+- `canonical_input.json` for signature inference
+- `checksums.json` for integrity validation
 
-1. Upload model artifacts to a UC volume.
-2. Optionally include `checksums.json` to the volume for integrity validation.
-3. Run the appropriate model logging notebook (1a-1e).
-4. Run evaluation and approval.
-5. Deploy model serving endpoint for real-time inference or run batch inference.
+## Databricks Asset Bundles (DABs)
 
-## Databricks Asset Bundles (optional)
+`databricks.yml` defines bundle variables, targets, and job wiring.
 
-This repo includes optional DABs configuration.
+```bash
+# Deploy to dev
+databricks bundle deploy --target dev
 
-`databricks.yml`
+# Run end-to-end pipeline
+databricks bundle run e2e_pipeline_job --target dev
+```
 
-Defines:
-- Bundle name
-- Variables (catalog, schema, volume, model name, thresholds)
-- Targets (dev/prod)
-- Job wiring
-- Notebook sync rules
+`jobs/` includes pre-defined jobs:
+- `model-logging-job.yml` — log and register artifact
+- `model-deployment-job.yml` — evaluate → approve → deploy
+- `batch-inference-job.yml` — batch scoring
+- `e2e-pipeline-job.yml` — full pipeline end-to-end
 
-You can:
-- Modify variables
-- Swap notebook paths
-- Integrate into your own deployment structure
+All jobs use serverless compute.
 
-`jobs/`
+### Multi-model scale
 
-Includes pre-defined jobs:
-- `model-logging-job.yml`
-- `model-deployment-job.yml`
-- `batch-inference-job.yml`
-- `e2e-pipeline-job.yml`
+This template is structured for a single model. For teams running multiple models (e.g. a suite of pricing or risk models with a shared pipeline structure), the recommended approach is to keep a single bundle and run jobs with per-model variable overrides:
 
-These are example. You may replace with customer-specific jobs.
+```bash
+databricks bundle run e2e_pipeline_job --var="model_name=pricing_model_a"
+databricks bundle run e2e_pipeline_job --var="model_name=pricing_model_b"
+```
+
+Each model gets its own MLflow experiment, UC model version, and serving endpoint. Approval thresholds can also be overridden per model via `--var`. This works well when models share the same pipeline structure and differ only in training data or configuration.
+
+If models diverge significantly in pipeline structure, consider a separate bundle per model.
+
+### Promote Code
+
+This template supports the Promote Code pattern. Point each target at a separate workspace and catalog:
+
+```yaml
+targets:
+  dev:
+    workspace:
+      host: https://uat-ml.cloud.databricks.com
+    variables:
+      catalog_name: uat_catalog
+
+  prod:
+    workspace:
+      host: https://prod-ml.cloud.databricks.com
+    variables:
+      catalog_name: prod_catalog
+```
+
+The same notebooks are deployed to both environments via `databricks bundle deploy`. Each environment trains against its own data and maintains its own model registry. No artifact crosses the workspace boundary.
+
+Rollback within an environment is handled by reassigning the `Champion` alias to a previous model version — the serving endpoint resolves the alias at request time with no redeployment required. Cross-environment rollback is a `git revert` + re-run of `databricks bundle deploy`.
+
+### CI/CD with GitHub Actions or Azure DevOps
+
+For true CI/CD, wire `databricks bundle deploy` into your pipeline so that every merge to a branch triggers a deployment automatically — no manual CLI invocations required.
+
+**GitHub Actions (example):**
+
+```yaml
+# .github/workflows/deploy.yml
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: databricks/setup-cli@main
+      - run: databricks bundle deploy --target prod
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+```
+
+**Azure DevOps (example):**
+
+```yaml
+# azure-pipelines.yml
+trigger:
+  branches:
+    include: [main]
+
+steps:
+  - script: |
+      curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
+      databricks bundle deploy --target prod
+    env:
+      DATABRICKS_HOST: $(DATABRICKS_HOST)
+      DATABRICKS_TOKEN: $(DATABRICKS_TOKEN)
+```
+
+In both cases, store `DATABRICKS_HOST` and `DATABRICKS_TOKEN` (or a service principal OAuth credential) as secrets in the CI/CD system. The pipeline deploys notebooks and job definitions to the target workspace; the actual training and serving runs are then triggered separately via `databricks bundle run` or on schedule.
+
+### Lakehouse Monitoring and Retraining
+
+Once a model is serving, two additional layers are recommended to close the MLOps loop:
+
+**Lakehouse Monitoring (data and model drift):**
+
+Enable Lakehouse Monitoring on the inference log table written by Model Serving (configured in `4a_model_serving.ipynb`). This detects:
+- Input feature drift (distribution shift in incoming requests)
+- Prediction drift (output distribution changes over time)
+
+Monitor the auto-generated `_drift_metrics` and `_profile_metrics` tables, or surface them in an AI/BI dashboard. Lakehouse Monitoring is configured in the Catalog UI or via the API — no additional code in this template is required.
+
+**Automated retraining triggers:**
+
+When drift exceeds a threshold, retraining can be triggered by:
+1. A scheduled `databricks bundle run e2e_pipeline_job` (cron-based, simplest option)
+2. A Lakeflow pipeline or DLT trigger that watches the drift metrics table and fires a job run when thresholds are breached
+3. A CI/CD pipeline dispatch triggered by a monitoring alert webhook
+
+The bundle variables (`accuracy_threshold`, `f1_threshold`) act as the gate in `3_model_approval.ipynb` — a retrain that does not improve on the current Champion will fail approval and not be promoted automatically.
 
 ## Design principles
 
 - DataFrame in → DataFrame out
-- Stable input/output contracts
+- Stable input/output contracts via MLflow model signatures
 - Clear artifact boundaries
 - Framework-agnostic deployment path
 - Extendable via additional MLflow flavours
 - Optional checksum validation for integrity
 
+## What this template does not cover
+
+The following should be layered on top depending on customer maturity:
+
+- Automated retraining triggers
+- Blue/green or canary deployments
+- Multi-model routing
+- CI/CD pipeline (GitHub Actions / Azure DevOps triggering bundle deploy)
+- Dev/prod workspace separation
+- Data validation before training
+
 ## Troubleshooting
 
-- **Volume not found** — Check catalog, schema, and volume names.
+- **Volume not found** — Check catalog, schema, and volume names in widgets.
 - **Import / module errors** — Run `%pip install` in the notebook and restart Python.
-- **Registration fails** — Check Unity Catalog permissions and (if used) checksum keys.
-- **Deployment fails** — Ensure the model is approved and has the Champion alias.
+- **Registration fails** — Check Unity Catalog permissions.
+- **Deployment fails** — Ensure the model has the Champion alias and approval tag set by `3_model_approval`.
+- **DABs deploy fails** — Ensure `DATABRICKS_HOST` is set or hardcoded in the dev target. `workspace.host` does not support variable interpolation.
