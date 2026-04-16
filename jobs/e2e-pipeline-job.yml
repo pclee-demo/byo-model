@@ -10,26 +10,14 @@ resources:
       name: "[${bundle.target}] BYO Model - E2E Pipeline"
       description: "Logging → evaluation → approval → real-time and/or batch inference (conditional on approval and job parameters)"
 
-      # Choose which inference stage(s) to run after approval: "true" or "false"
       parameters:
         - name: run_realtime
           default: "true"
         - name: run_batch
           default: "false"
 
-      job_clusters:
-        - job_cluster_key: e2e_cluster
-          new_cluster:
-            spark_version: "14.3.x-scala2.12"
-            node_type_id: "Standard_DS4_v2"
-            num_workers: 2
-            spark_conf:
-              spark.databricks.delta.preview.enabled: "true"
-
       tasks:
-        # Stage 1: Model Logging
         - task_key: model_logging
-          job_cluster_key: e2e_cluster
           notebook_task:
             notebook_path: ../artifacts/01_model_log/1a_native_xgb.ipynb
             base_parameters:
@@ -39,11 +27,9 @@ resources:
               model_name: ${var.model_name}
               experiment_path: ${var.experiment_path}
 
-        # Stage 2: Model Evaluation
         - task_key: model_evaluation
           depends_on:
             - task_key: model_logging
-          job_cluster_key: e2e_cluster
           notebook_task:
             notebook_path: ../artifacts/02_model_deployment/2_model_evaluation.ipynb
             base_parameters:
@@ -53,11 +39,9 @@ resources:
               model_version: "{{tasks.model_logging.values.model_version}}"
               evaluation_table: ""
 
-        # Stage 3: Model Approval
         - task_key: model_approval
           depends_on:
             - task_key: model_evaluation
-          job_cluster_key: e2e_cluster
           notebook_task:
             notebook_path: ../artifacts/02_model_deployment/3_model_approval.ipynb
             base_parameters:
@@ -68,7 +52,6 @@ resources:
               accuracy_threshold: ${var.accuracy_threshold}
               f1_threshold: ${var.f1_threshold}
 
-        # Condition: only proceed to deployment/inference if model was approved
         - task_key: condition_approval
           depends_on:
             - task_key: model_approval
@@ -77,7 +60,6 @@ resources:
             op: EQUAL_TO
             right: "approved"
 
-        # Condition: run real-time deployment only when run_realtime is "true"
         - task_key: condition_run_realtime
           depends_on:
             - task_key: condition_approval
@@ -87,7 +69,6 @@ resources:
             op: EQUAL_TO
             right: "true"
 
-        # Condition: run batch inference only when run_batch is "true"
         - task_key: condition_run_batch
           depends_on:
             - task_key: condition_approval
@@ -97,12 +78,10 @@ resources:
             op: EQUAL_TO
             right: "true"
 
-        # Stage 4a: Model Deployment (real-time serving) — only if approved and run_realtime == "true"
         - task_key: model_deployment
           depends_on:
             - task_key: condition_run_realtime
               outcome: "true"
-          job_cluster_key: e2e_cluster
           notebook_task:
             notebook_path: ../artifacts/02_model_deployment/4a_model_serving.ipynb
             base_parameters:
@@ -113,12 +92,10 @@ resources:
               workload_size: "Small"
               scale_to_zero: "true"
 
-        # Stage 4b: Batch Inference — only if approved and run_batch == "true"
         - task_key: batch_inference
           depends_on:
             - task_key: condition_run_batch
               outcome: "true"
-          job_cluster_key: e2e_cluster
           notebook_task:
             notebook_path: ../artifacts/02_model_deployment/4b_batch_inference.ipynb
             base_parameters:
@@ -128,21 +105,18 @@ resources:
               input_table: ""
               output_table: ""
 
-      # Permissions
       permissions:
         - level: CAN_VIEW
           group_name: users
         - level: CAN_MANAGE_RUN
           user_name: ${workspace.current_user.userName}
 
-      # Email notifications
       # email_notifications:
       #   on_success:
       #     - ml-team@company.com
       #   on_failure:
       #     - ml-team@company.com
 
-      # Tags
       tags:
         team: ml-engineering
         project: byo-model

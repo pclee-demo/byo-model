@@ -26,17 +26,23 @@ variables:
     description: Registered model name (e.g. pyfunc_xgb, native_torch)
     default: pyfunc_xgb
   experiment_path:
-    description: MLflow experiment path (optional)
+    description: MLflow experiment path (used by BYOM logging notebooks)
     default: ""
+  experiment_name:
+    description: MLflow experiment name (used by retrain notebooks)
+    default: /Shared/byo_model_experiment
+  features_table_name:
+    description: UC table name for training features
+    default: iris_features
+  labels_table_name:
+    description: UC table name for training labels
+    default: iris_labels
   accuracy_threshold:
     description: Minimum accuracy for model approval
     default: "0.25"
   f1_threshold:
     description: Minimum F1 score for model approval
     default: "0.10"
-  databricks_host:
-    description: Databricks workspace host (set per environment or in CLI)
-    default: ""
 
 # Workspace configuration
 workspace:
@@ -48,15 +54,15 @@ targets:
     mode: development
     default: true
     workspace:
-      host: ${var.databricks_host}
+      host: https://e2-demo-field-eng.cloud.databricks.com
     variables:
       catalog_name: pcl
       schema_name: byo_model
 
   prod:
     mode: production
-    workspace:
-      host: ${var.databricks_host}
+    # workspace.host must be set via DATABRICKS_HOST env var or databricks auth login
+    # Variable interpolation is not supported for workspace.host
     variables:
       catalog_name: pcl
       schema_name: byo_model
@@ -76,9 +82,5 @@ sync:
 # Resources (additional resources can be defined here)
 resources:
   # Jobs are defined in jobs/*.yml files
-  experiments:
-    ml_experiment:
-      name: /Workspace/Users/${workspace.current_user.userName}/byo-model/${var.model_name}
-      permissions:
-        - level: CAN_MANAGE
-          user_name: ${workspace.current_user.userName}
+  # Note: MLflow experiments are created by the notebooks via mlflow.set_experiment()
+  # and cannot be created inside a Git repo folder by DABs.
